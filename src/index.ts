@@ -7,6 +7,8 @@ import rateLimit from 'express-rate-limit'
 import authRoutes from './routes/auth'
 import vendorRoutes from './routes/customer/vendors'
 import bookingRoutes from './routes/customer/bookings'
+import customerProfileRoutes from './routes/customer/profile'
+import reviewRoutes from './routes/customer/reviews'
 import orderRoutes from './routes/vendor/orders'
 import serviceRoutes from './routes/vendor/services'
 import portfolioRoutes from './routes/vendor/portfolio'
@@ -27,6 +29,8 @@ import xenditWebhookRoutes from './routes/webhooks/xendit'
 const app = express()
 const PORT = process.env.PORT || 4000
 
+app.set('trust proxy', 1)
+
 app.use(helmet())
 app.use(cors({ origin: process.env.CORS_ORIGIN?.split(',') || '*' }))
 app.use(express.json())
@@ -39,6 +43,8 @@ app.get('/health', (_req, res) => res.json({ status: 'ok' }))
 app.use('/api/auth', authRoutes)
 app.use('/api/vendors', vendorRoutes)
 app.use('/api/bookings', bookingRoutes)
+app.use('/api/customer/profile', customerProfileRoutes)
+app.use('/api/reviews', reviewRoutes)
 app.use('/api/vendor/orders', orderRoutes)
 app.use('/api/vendor/services', serviceRoutes)
 app.use('/api/vendor/portfolio', portfolioRoutes)

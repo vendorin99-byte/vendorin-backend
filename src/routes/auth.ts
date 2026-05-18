@@ -2,7 +2,13 @@ import { Router } from 'express'
 import { z } from 'zod'
 import jwt from 'jsonwebtoken'
 import bcrypt from 'bcrypt'
+import crypto from 'crypto'
 import { supabase } from '../lib/supabase'
+import {
+  sendWelcomeCustomerEmail,
+  sendVendorWelcomeEmail,
+  sendPasswordResetEmail,
+} from '../services/email'
 
 const router = Router()
 
@@ -10,27 +16,64 @@ function signToken(payload: object) {
   return jwt.sign(payload, process.env.JWT_SECRET!, { expiresIn: '30d' })
 }
 
-// ── Customer register (OTP-based, no password) ──────────────────────────────
+function generateReferralCode(length = 8): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+  return Array.from({ length }, () => chars[Math.floor(Math.random() * chars.length)]).join('')
+}
+
+function generateOTP(): string {
+  return String(Math.floor(100000 + Math.random() * 900000))
+}
+
+// ── Customer register ────────────────────────────────────────────────────────
 router.post('/register', async (req, res) => {
   const schema = z.object({
     email: z.string().email(),
     name: z.string().min(2),
     phone: z.string().optional(),
     password: z.string().min(8),
+    ref: z.string().optional(),
   })
   const parsed = schema.safeParse(req.body)
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() })
 
-  const { email, name, phone, password } = parsed.data
+  const { email, name, phone, password, ref } = parsed.data
+
+  const { data: existing } = await supabase.from('users').select('id, is_verified').eq('email', email).maybeSingle()
+  if (existing) {
+    if (!existing.is_verified) return res.status(400).json({ error: 'Email sudah terdaftar tapi belum diverifikasi. Gunakan tombol "Kirim Ulang OTP".' })
+    return res.status(400).json({ error: 'Email sudah terdaftar' })
+  }
+
+  let referred_by: string | null = null
+  if (ref) {
+    const { data: referrer } = await supabase.from('users').select('id').eq('referral_code', ref).maybeSingle()
+    if (referrer) referred_by = referrer.id
+  }
+
   const password_hash = await bcrypt.hash(password, 10)
+  const referral_code = generateReferralCode()
 
   const { error } = await supabase.from('users').insert({
     email, name, phone, role: 'customer',
-    password_hash, is_verified: true,
+    password_hash, is_verified: false,
+    referral_code, referred_by,
   })
 
-  if (error) return res.status(400).json({ error: error.message })
-  res.json({ message: 'Akun berhasil dibuat' })
+  if (error) {
+    if (error.code === '23505') return res.status(400).json({ error: 'Email sudah terdaftar' })
+    return res.status(400).json({ error: error.message })
+  }
+
+  // Generate & store OTP
+  const otp = generateOTP()
+  const expires_at = new Date(Date.now() + 10 * 60 * 1000).toISOString()
+  await supabase.from('user_otps').upsert({ email, otp, expires_at }, { onConflict: 'email' })
+
+  // Send email (fire & forget)
+  sendWelcomeCustomerEmail(email, name, otp).catch(console.error)
+
+  res.json({ message: 'OTP dikirim ke email Anda' })
 })
 
 // ── Vendor register ──────────────────────────────────────────────────────────
@@ -41,8 +84,8 @@ router.post('/register-vendor', async (req, res) => {
     return res.status(400).json({ error: 'Semua field wajib diisi' })
   }
 
-  const existing = await supabase.from('users').select('id').eq('email', email).single()
-  if (existing.data) return res.status(400).json({ error: 'Email sudah terdaftar' })
+  const { data: existing } = await supabase.from('users').select('id').eq('email', email).maybeSingle()
+  if (existing) return res.status(400).json({ error: 'Email sudah terdaftar' })
 
   const password_hash = await bcrypt.hash(password, 10)
 
@@ -65,6 +108,9 @@ router.post('/register-vendor', async (req, res) => {
 
   // Link vendor_id back to user
   await supabase.from('users').update({ vendor_id: vendor.id }).eq('id', user.id)
+
+  // Send welcome email
+  sendVendorWelcomeEmail(email, business_name).catch(console.error)
 
   res.status(201).json({ message: 'Pendaftaran berhasil, menunggu verifikasi admin' })
 })
@@ -99,6 +145,88 @@ router.post('/login', async (req, res) => {
     token,
     user: { id: user.id, name: user.name, email: user.email, role: user.role },
   })
+})
+
+// ── Verify OTP ───────────────────────────────────────────────────────────────
+router.post('/verify-otp', async (req, res) => {
+  const { email, otp } = req.body
+  if (!email || !otp) return res.status(400).json({ error: 'Email dan OTP wajib diisi' })
+
+  const { data: record } = await supabase
+    .from('user_otps').select('*').eq('email', email).single()
+
+  if (!record) return res.status(400).json({ error: 'OTP tidak ditemukan, minta kirim ulang' })
+  if (record.otp !== otp) return res.status(400).json({ error: 'Kode OTP salah' })
+  if (new Date(record.expires_at) < new Date()) return res.status(400).json({ error: 'Kode OTP sudah kadaluarsa' })
+
+  await supabase.from('users').update({ is_verified: true }).eq('email', email)
+  await supabase.from('user_otps').delete().eq('email', email)
+
+  const { data: user } = await supabase.from('users').select('*').eq('email', email).single()
+  if (!user) return res.status(404).json({ error: 'User tidak ditemukan' })
+
+  const token = signToken({ id: user.id, email: user.email, role: user.role, vendorId: user.vendor_id })
+  res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } })
+})
+
+// ── Resend OTP ────────────────────────────────────────────────────────────────
+router.post('/resend-otp', async (req, res) => {
+  const { email } = req.body
+  if (!email) return res.status(400).json({ error: 'Email wajib diisi' })
+
+  const { data: user } = await supabase.from('users').select('name, is_verified').eq('email', email).single()
+  if (!user) return res.status(404).json({ error: 'Email tidak ditemukan' })
+  if (user.is_verified) return res.status(400).json({ error: 'Akun sudah terverifikasi' })
+
+  const otp = generateOTP()
+  const expires_at = new Date(Date.now() + 10 * 60 * 1000).toISOString()
+  await supabase.from('user_otps').upsert({ email, otp, expires_at }, { onConflict: 'email' })
+
+  sendWelcomeCustomerEmail(email, user.name, otp).catch(console.error)
+  res.json({ message: 'OTP dikirim ulang' })
+})
+
+// ── Forgot password (kirim kode 6 digit ke email) ────────────────────────────
+router.post('/forgot-password', async (req, res) => {
+  const { email } = req.body
+  if (!email) return res.status(400).json({ error: 'Email wajib diisi' })
+
+  const { data: user } = await supabase.from('users').select('id, name').eq('email', email).single()
+  if (!user) return res.json({ message: 'Jika email terdaftar, kode reset akan dikirim' })
+
+  const code = generateOTP()
+  const expires_at = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+
+  await supabase.from('password_resets').upsert(
+    { user_id: user.id, token: code, expires_at, used: false },
+    { onConflict: 'user_id' }
+  )
+
+  sendPasswordResetEmail(email, user.name, code).catch(console.error)
+  res.json({ message: 'Kode reset dikirim ke email Anda' })
+})
+
+// ── Reset password (pakai kode 6 digit + email) ───────────────────────────────
+router.post('/reset-password', async (req, res) => {
+  const { email, code, password } = req.body
+  if (!email || !code || !password) return res.status(400).json({ error: 'Email, kode, dan password wajib diisi' })
+  if (password.length < 8) return res.status(400).json({ error: 'Password minimal 8 karakter' })
+
+  const { data: user } = await supabase.from('users').select('id').eq('email', email).single()
+  if (!user) return res.status(400).json({ error: 'Email tidak ditemukan' })
+
+  const { data: record } = await supabase
+    .from('password_resets').select('*')
+    .eq('user_id', user.id).eq('token', code).eq('used', false).single()
+
+  if (!record) return res.status(400).json({ error: 'Kode tidak valid atau sudah digunakan' })
+  if (new Date(record.expires_at) < new Date()) return res.status(400).json({ error: 'Kode sudah kadaluarsa, minta ulang' })
+
+  const password_hash = await bcrypt.hash(password, 10)
+  await supabase.from('users').update({ password_hash }).eq('id', user.id)
+  await supabase.from('password_resets').update({ used: true }).eq('user_id', user.id)
+
+  res.json({ message: 'Password berhasil diubah' })
 })
 
 // ── Create admin account (one-time setup, hanya dari localhost) ───────────────
