@@ -28,6 +28,7 @@ const profileSchema = z.object({
   whatsapp: z.string().optional(),
   lat: z.number().optional(),
   lng: z.number().optional(),
+  service_radius_km: z.number().optional(),
   operating_hours: z.record(z.string()).optional(),
 })
 
