@@ -9,14 +9,21 @@ const router = Router()
 router.use(requireAuth, requireRole('vendor'))
 
 router.get('/', async (req, res) => {
-  const { data, error } = await supabase
+  const { data: vendor, error } = await supabase
     .from('vendors')
-    .select('*, users(email, name, phone)')
+    .select('*')
     .eq('id', req.user!.vendorId)
     .single()
 
-  if (error) return res.status(404).json({ error: 'Vendor not found' })
-  res.json(data)
+  if (error || !vendor) return res.status(404).json({ error: 'Vendor not found' })
+
+  const { data: user } = await supabase
+    .from('users')
+    .select('email, name, phone')
+    .eq('id', vendor.user_id)
+    .single()
+
+  res.json({ ...vendor, users: user })
 })
 
 const profileSchema = z.object({
