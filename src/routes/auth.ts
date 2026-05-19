@@ -2,7 +2,6 @@ import { Router } from 'express'
 import { z } from 'zod'
 import jwt from 'jsonwebtoken'
 import bcrypt from 'bcrypt'
-import crypto from 'crypto'
 import multer from 'multer'
 import { supabase } from '../lib/supabase'
 import {
@@ -92,6 +91,7 @@ router.post('/register-vendor',
     type MFile = { buffer: Buffer; originalname: string; mimetype: string }
     const files = req.files as Record<string, MFile[]>
     if (!files?.ktp?.[0]) return res.status(400).json({ error: 'Foto KTP wajib diupload' })
+    if (!files?.nib?.[0]) return res.status(400).json({ error: 'Dokumen NIB / AKTA Perusahaan wajib diupload' })
 
     const { data: existing } = await supabase.from('users').select('id').eq('email', email).maybeSingle()
     if (existing) return res.status(400).json({ error: 'Email sudah terdaftar' })
