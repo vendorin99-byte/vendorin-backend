@@ -132,6 +132,7 @@ router.post('/register-vendor',
       npwp: npwp || null,
       ktp_url,
       nib_url,
+      verified: false,
     }).select().single()
 
     if (vendorErr || !vendor) return res.status(500).json({ error: vendorErr?.message || 'Gagal membuat profil vendor' })

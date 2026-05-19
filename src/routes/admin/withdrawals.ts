@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { requireAuth } from '../../middlewares/auth'
-import { requireRole, requireAdmin } from '../../middlewares/roleCheck'
+import { requireRole } from '../../middlewares/roleCheck'
 import { supabase } from '../../lib/supabase'
 import { createDisbursement } from '../../services/tripay'
 import { creditWallet } from '../../services/wallet'
@@ -17,21 +17,46 @@ router.get('/', async (req, res) => {
 
   let query = supabase
     .from('withdrawals')
-    .select(`*, vendors(business_name, users(email)), vendor_bank_accounts(bank_code, account_number, account_name)`, { count: 'exact' })
+    .select('*, vendor_bank_accounts(bank_code, account_number, account_name)', { count: 'exact' })
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1)
 
   if (status) query = query.eq('status', status as string)
 
-  const { data, error, count } = await query
+  const { data: withdrawals, error, count } = await query
   if (error) return res.status(500).json({ error: error.message })
+
+  if (!withdrawals?.length) return res.json({ data: [], total: 0 })
+
+  // Fetch vendor names separately
+  const vendorIds = [...new Set(withdrawals.map((w: any) => w.vendor_id).filter(Boolean))]
+  const { data: vendors } = await supabase
+    .from('vendors')
+    .select('id, business_name, user_id')
+    .in('id', vendorIds)
+
+  const userIds = (vendors || []).map((v: any) => v.user_id).filter(Boolean)
+  const { data: users } = await supabase
+    .from('users')
+    .select('id, email')
+    .in('id', userIds)
+
+  const vendorMap = Object.fromEntries((vendors || []).map((v: any) => [v.id, v]))
+  const userMap = Object.fromEntries((users || []).map((u: any) => [u.id, u]))
+  const data = withdrawals.map((w: any) => ({
+    ...w,
+    vendors: vendorMap[w.vendor_id]
+      ? { ...vendorMap[w.vendor_id], users: userMap[vendorMap[w.vendor_id].user_id] }
+      : null,
+  }))
+
   res.json({ data, total: count })
 })
 
 router.post('/:id/approve', async (req, res) => {
   const { data: withdrawal } = await supabase
     .from('withdrawals')
-    .select('*, vendor_bank_accounts(*), vendors(users(email))')
+    .select('*, vendor_bank_accounts(*)')
     .eq('id', req.params.id)
     .eq('status', 'pending')
     .single()
@@ -66,7 +91,7 @@ router.post('/:id/reject', async (req, res) => {
 
   const { data: withdrawal } = await supabase
     .from('withdrawals')
-    .select('*, vendors(users(email))')
+    .select('*')
     .eq('id', req.params.id)
     .single()
 
@@ -75,7 +100,13 @@ router.post('/:id/reject', async (req, res) => {
   await supabase.from('withdrawals').update({ status: 'rejected', failure_reason: reason }).eq('id', req.params.id)
   await creditWallet(withdrawal.vendor_id, withdrawal.amount, 'credit_refund', withdrawal.id, 'Withdrawal rejected — balance returned')
 
-  await sendWithdrawalFailedEmail((withdrawal as any).vendors.users.email, withdrawal.amount, reason)
+  // Get user email for notification
+  const { data: vendor } = await supabase.from('vendors').select('user_id').eq('id', withdrawal.vendor_id).single()
+  if (vendor) {
+    const { data: user } = await supabase.from('users').select('email').eq('id', vendor.user_id).single()
+    if (user?.email) await sendWithdrawalFailedEmail(user.email, withdrawal.amount, reason)
+  }
+
   res.json({ message: 'Withdrawal rejected and balance returned' })
 })
 
