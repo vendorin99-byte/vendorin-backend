@@ -1,6 +1,7 @@
 import { Router } from 'express'
+import bcrypt from 'bcrypt'
 import { requireAuth } from '../../middlewares/auth'
-import { requireRole, requireAdmin } from '../../middlewares/roleCheck'
+import { requireRole } from '../../middlewares/roleCheck'
 import { supabase } from '../../lib/supabase'
 
 const router = Router()
@@ -37,6 +38,25 @@ router.patch('/:id/activate', async (req, res) => {
   const { error } = await supabase.from('users').update({ is_active: true }).eq('id', req.params.id)
   if (error) return res.status(500).json({ error: error.message })
   res.json({ message: 'User activated' })
+})
+
+router.patch('/:id/reset-password', async (req, res) => {
+  const { password } = req.body
+  if (!password || password.length < 8) return res.status(400).json({ error: 'Password minimal 8 karakter' })
+  const password_hash = await bcrypt.hash(password, 10)
+  const { error } = await supabase.from('users').update({ password_hash }).eq('id', req.params.id)
+  if (error) return res.status(500).json({ error: error.message })
+  res.json({ message: 'Password berhasil direset' })
+})
+
+router.patch('/:id/location', async (req, res) => {
+  const { lat, lng } = req.body
+  if (!lat || !lng) return res.status(400).json({ error: 'Lat dan lng wajib diisi' })
+  const { data: user } = await supabase.from('users').select('vendor_id').eq('id', req.params.id).single()
+  if (!user?.vendor_id) return res.status(404).json({ error: 'Vendor tidak ditemukan' })
+  const { error } = await supabase.from('vendors').update({ lat, lng }).eq('id', user.vendor_id)
+  if (error) return res.status(500).json({ error: error.message })
+  res.json({ message: 'Lokasi berhasil diupdate' })
 })
 
 export default router
