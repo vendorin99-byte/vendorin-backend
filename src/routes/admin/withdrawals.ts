@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { requireAuth } from '../../middlewares/auth'
 import { requireRole, requireAdmin } from '../../middlewares/roleCheck'
 import { supabase } from '../../lib/supabase'
-import { createDisbursement } from '../../services/xendit'
+import { createDisbursement } from '../../services/tripay'
 import { creditWallet } from '../../services/wallet'
 import { sendWithdrawalSuccessEmail, sendWithdrawalFailedEmail } from '../../services/email'
 
@@ -42,15 +42,14 @@ router.post('/:id/approve', async (req, res) => {
     const disburse = await createDisbursement({
       externalId: `withdrawal-${withdrawal.id}`,
       bankCode: withdrawal.vendor_bank_accounts.bank_code,
-      accountHolderName: withdrawal.vendor_bank_accounts.account_name,
+      accountName: withdrawal.vendor_bank_accounts.account_name,
       accountNumber: withdrawal.vendor_bank_accounts.account_number,
-      description: 'VendorIn Disbursement',
       amount: withdrawal.amount_received,
     })
 
     await supabase.from('withdrawals').update({
       status: 'processing',
-      xendit_disburse_id: (disburse as any).id,
+      tripay_disburse_id: disburse.uuid,
       approved_by: req.user!.id,
       approved_at: new Date().toISOString(),
     }).eq('id', req.params.id)

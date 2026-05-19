@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { requireAuth, } from '../../middlewares/auth'
 import { requireRole } from '../../middlewares/roleCheck'
 import { supabase } from '../../lib/supabase'
-import { createInvoice } from '../../services/xendit'
+import { createTransaction } from '../../services/tripay'
 
 const router = Router()
 
@@ -43,21 +43,23 @@ router.post('/', requireAuth, requireRole('customer'), async (req, res) => {
 
   if (error) return res.status(500).json({ error: error.message })
 
-  const invoice = await createInvoice({
-    externalId: `booking-dp-${booking.id}`,
+  const txn = await createTransaction({
+    merchantRef: `booking-dp-${booking.id}`,
     amount: dpAmount,
-    payerEmail: req.user!.email,
-    description: `DP Booking ${service.name}`,
+    customerName: req.user!.email,
+    customerEmail: req.user!.email,
+    customerPhone: '08000000000',
+    itemName: `DP Booking ${service.name}`,
   })
 
   await supabase.from('transactions').insert({
     booking_id: booking.id,
     amount: dpAmount,
     type: 'dp',
-    xendit_invoice_id: (invoice as any).id,
+    tripay_reference: txn.reference,
   })
 
-  res.status(201).json({ booking, payment_url: (invoice as any).invoice_url })
+  res.status(201).json({ booking, payment_url: txn.checkout_url, pay_code: txn.pay_code, qr_url: txn.qr_url })
 })
 
 router.get('/my', requireAuth, requireRole('customer'), async (req, res) => {
@@ -103,23 +105,25 @@ router.post('/:id/pay-remaining', requireAuth, requireRole('customer'), async (r
 
   const remaining = booking.total_amount - booking.dp_amount
 
-  const invoice = await createInvoice({
-    externalId: `booking-remaining-${booking.id}`,
+  const txn = await createTransaction({
+    merchantRef: `booking-remaining-${booking.id}`,
     amount: remaining,
-    payerEmail: req.user!.email,
-    description: `Pelunasan Booking ${(booking.services as any).name}`,
+    customerName: req.user!.email,
+    customerEmail: req.user!.email,
+    customerPhone: '08000000000',
+    itemName: `Pelunasan Booking ${(booking.services as any).name}`,
   })
 
   await supabase.from('transactions').insert({
     booking_id: booking.id,
     amount: remaining,
     type: 'remaining',
-    xendit_invoice_id: (invoice as any).id,
+    tripay_reference: txn.reference,
   })
 
   await supabase.from('bookings').update({ status: 'pending_remaining' }).eq('id', booking.id)
 
-  res.json({ amount: remaining, payment_url: (invoice as any).invoice_url })
+  res.json({ amount: remaining, payment_url: txn.checkout_url, pay_code: txn.pay_code, qr_url: txn.qr_url })
 })
 
 export default router

@@ -8,12 +8,17 @@ const router = Router()
 
 router.use(requireAuth, requireRole('vendor'))
 
+const PRICING_TYPES = ['paket', 'per_jam', 'setengah_hari', 'sehari', 'custom'] as const
+
 const serviceSchema = z.object({
   name: z.string().min(2),
   description: z.string().optional(),
   price: z.number().positive(),
   dp_percent: z.number().min(20).max(50).default(30),
   duration: z.string().optional(),
+  pricing_type: z.enum(PRICING_TYPES).default('paket'),
+  unit_label: z.string().optional(),
+  is_active: z.boolean().optional(),
 })
 
 router.get('/', async (req, res) => {

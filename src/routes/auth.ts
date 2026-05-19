@@ -3,12 +3,15 @@ import { z } from 'zod'
 import jwt from 'jsonwebtoken'
 import bcrypt from 'bcrypt'
 import crypto from 'crypto'
+import multer from 'multer'
 import { supabase } from '../lib/supabase'
 import {
   sendWelcomeCustomerEmail,
   sendVendorWelcomeEmail,
   sendPasswordResetEmail,
 } from '../services/email'
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } })
 
 const router = Router()
 
@@ -77,43 +80,69 @@ router.post('/register', async (req, res) => {
 })
 
 // ── Vendor register ──────────────────────────────────────────────────────────
-router.post('/register-vendor', async (req, res) => {
-  const { business_name, name, email, phone, category, city, password } = req.body
+router.post('/register-vendor',
+  upload.fields([{ name: 'ktp', maxCount: 1 }, { name: 'nib', maxCount: 1 }]),
+  async (req, res) => {
+    const { business_name, name, email, phone, category, city, password, npwp } = req.body
 
-  if (!email || !password || !business_name || !name || !category) {
-    return res.status(400).json({ error: 'Semua field wajib diisi' })
+    if (!email || !password || !business_name || !name || !category) {
+      return res.status(400).json({ error: 'Semua field wajib diisi' })
+    }
+
+    type MFile = { buffer: Buffer; originalname: string; mimetype: string }
+    const files = req.files as Record<string, MFile[]>
+    if (!files?.ktp?.[0]) return res.status(400).json({ error: 'Foto KTP wajib diupload' })
+
+    const { data: existing } = await supabase.from('users').select('id').eq('email', email).maybeSingle()
+    if (existing) return res.status(400).json({ error: 'Email sudah terdaftar' })
+
+    const password_hash = await bcrypt.hash(password, 10)
+
+    const { data: user, error: userErr } = await supabase.from('users').insert({
+      email, name, phone, role: 'vendor', password_hash, is_verified: false,
+    }).select().single()
+
+    if (userErr || !user) return res.status(500).json({ error: userErr?.message || 'Gagal membuat akun' })
+
+    // Upload KTP to private-docs storage
+    let ktp_url: string | null = null
+    const ktpFile = files.ktp[0]
+    const ktpPath = `ktp/${user.id}-${Date.now()}.${ktpFile.originalname.split('.').pop()}`
+    const { data: ktpUp, error: ktpErr } = await supabase.storage
+      .from('private-docs')
+      .upload(ktpPath, ktpFile.buffer, { contentType: ktpFile.mimetype })
+    if (!ktpErr && ktpUp) ktp_url = ktpUp.path
+
+    // Upload NIB/AKTA if provided
+    let nib_url: string | null = null
+    if (files?.nib?.[0]) {
+      const nibFile = files.nib[0]
+      const nibPath = `nib/${user.id}-${Date.now()}.${nibFile.originalname.split('.').pop()}`
+      const { data: nibUp } = await supabase.storage
+        .from('private-docs')
+        .upload(nibPath, nibFile.buffer, { contentType: nibFile.mimetype })
+      if (nibUp) nib_url = nibUp.path
+    }
+
+    const { data: vendor, error: vendorErr } = await supabase.from('vendors').insert({
+      user_id: user.id,
+      business_name,
+      category,
+      city,
+      npwp: npwp || null,
+      ktp_url,
+      nib_url,
+    }).select().single()
+
+    if (vendorErr || !vendor) return res.status(500).json({ error: vendorErr?.message || 'Gagal membuat profil vendor' })
+
+    await supabase.from('users').update({ vendor_id: vendor.id }).eq('id', user.id)
+
+    sendVendorWelcomeEmail(email, business_name).catch(console.error)
+
+    res.status(201).json({ message: 'Pendaftaran berhasil, menunggu verifikasi admin' })
   }
-
-  const { data: existing } = await supabase.from('users').select('id').eq('email', email).maybeSingle()
-  if (existing) return res.status(400).json({ error: 'Email sudah terdaftar' })
-
-  const password_hash = await bcrypt.hash(password, 10)
-
-  // Create user first
-  const { data: user, error: userErr } = await supabase.from('users').insert({
-    email, name, phone, role: 'vendor', password_hash, is_verified: false,
-  }).select().single()
-
-  if (userErr || !user) return res.status(500).json({ error: userErr?.message || 'Gagal membuat akun' })
-
-  // Create vendor profile
-  const { data: vendor, error: vendorErr } = await supabase.from('vendors').insert({
-    user_id: user.id,
-    business_name,
-    category,
-    city,
-  }).select().single()
-
-  if (vendorErr || !vendor) return res.status(500).json({ error: vendorErr?.message || 'Gagal membuat profil vendor' })
-
-  // Link vendor_id back to user
-  await supabase.from('users').update({ vendor_id: vendor.id }).eq('id', user.id)
-
-  // Send welcome email
-  sendVendorWelcomeEmail(email, business_name).catch(console.error)
-
-  res.status(201).json({ message: 'Pendaftaran berhasil, menunggu verifikasi admin' })
-})
+)
 
 // ── Login (admin, vendor, customer) ─────────────────────────────────────────
 router.post('/login', async (req, res) => {

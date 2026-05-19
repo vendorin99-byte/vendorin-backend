@@ -35,11 +35,16 @@ router.get('/:id', async (req, res) => {
 
   if (error || !data) return res.status(404).json({ error: 'Not found' })
 
-  const ktpSignedUrl = data.ktp_url
-    ? await supabase.storage.from('private-docs').createSignedUrl(data.ktp_url, 3600)
-    : null
+  const [ktpSigned, nibSigned] = await Promise.all([
+    data.ktp_url ? supabase.storage.from('private-docs').createSignedUrl(data.ktp_url, 3600) : null,
+    data.nib_url ? supabase.storage.from('private-docs').createSignedUrl(data.nib_url, 3600) : null,
+  ])
 
-  res.json({ ...data, ktp_signed_url: ktpSignedUrl?.data?.signedUrl })
+  res.json({
+    ...data,
+    ktp_signed_url: ktpSigned?.data?.signedUrl,
+    nib_signed_url: nibSigned?.data?.signedUrl,
+  })
 })
 
 router.post('/:id/approve', async (req, res) => {
