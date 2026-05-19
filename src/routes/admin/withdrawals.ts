@@ -8,7 +8,7 @@ import { sendWithdrawalSuccessEmail, sendWithdrawalFailedEmail } from '../../ser
 
 const router = Router()
 
-router.use(requireAdmin, requireAuth, requireRole('admin'))
+router.use(requireAuth, requireRole('admin'))
 
 router.get('/', async (req, res) => {
   const { status, page = '1' } = req.query

@@ -5,7 +5,7 @@ import { supabase } from '../../lib/supabase'
 
 const router = Router()
 
-router.use(requireAdmin, requireAuth, requireRole('admin'))
+router.use(requireAuth, requireRole('admin'))
 
 router.get('/summary', async (req, res) => {
   const [customers, vendors, transactions] = await Promise.all([

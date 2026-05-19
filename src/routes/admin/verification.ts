@@ -6,7 +6,7 @@ import { sendVendorApprovedEmail, sendVendorRejectedEmail } from '../../services
 
 const router = Router()
 
-router.use(requireAdmin, requireAuth, requireRole('admin'))
+router.use(requireAuth, requireRole('admin'))
 
 router.get('/', async (req, res) => {
   const { status = 'pending', page = '1' } = req.query

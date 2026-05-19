@@ -5,7 +5,7 @@ import { supabase } from '../../lib/supabase'
 
 const router = Router()
 
-router.use(requireAdmin, requireAuth, requireRole('admin'))
+router.use(requireAuth, requireRole('admin'))
 
 router.get('/', async (req, res) => {
   const { status, from, to, page = '1' } = req.query

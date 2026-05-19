@@ -7,7 +7,7 @@ import { debitWallet } from '../../services/wallet'
 
 const router = Router()
 
-router.use(requireAdmin, requireAuth, requireRole('admin'))
+router.use(requireAuth, requireRole('admin'))
 
 router.get('/', async (_req, res) => {
   const { data, error } = await supabase
