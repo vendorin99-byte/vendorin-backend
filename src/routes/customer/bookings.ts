@@ -4,6 +4,7 @@ import { requireAuth, } from '../../middlewares/auth'
 import { requireRole } from '../../middlewares/roleCheck'
 import { supabase } from '../../lib/supabase'
 import { createTransaction } from '../../services/tripay'
+import { sendPushNotification } from '../../services/pushNotification'
 
 const router = Router()
 
@@ -58,6 +59,22 @@ router.post('/', requireAuth, requireRole('customer'), async (req, res) => {
     type: 'dp',
     tripay_reference: txn.reference,
   })
+
+  // Send push notification to vendor
+  const { data: vendorUser } = await supabase
+    .from('users')
+    .select('push_token')
+    .eq('vendor_id', vendor_id)
+    .single()
+
+  if (vendorUser?.push_token) {
+    sendPushNotification({
+      to: vendorUser.push_token,
+      title: '🎉 Pesanan Baru!',
+      body: `Ada pesanan baru untuk paket ${service.name}. Cek sekarang!`,
+      data: { bookingId: booking.id, screen: 'VendorOrders' },
+    }).catch(console.error)
+  }
 
   res.status(201).json({ booking, payment_url: txn.checkout_url, pay_code: txn.pay_code, qr_url: txn.qr_url })
 })

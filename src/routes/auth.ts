@@ -278,4 +278,22 @@ router.post('/setup-admin', async (req, res) => {
   res.json({ message: 'Admin account created/updated' })
 })
 
+// ── Save push token ───────────────────────────────────────────────────────────
+router.post('/push-token', async (req, res) => {
+  const { token } = req.body
+  if (!token) return res.status(400).json({ error: 'token required' })
+
+  const authHeader = req.headers.authorization
+  if (!authHeader) return res.status(401).json({ error: 'Unauthorized' })
+
+  const jwt = require('jsonwebtoken')
+  try {
+    const decoded = jwt.verify(authHeader.replace('Bearer ', ''), process.env.JWT_SECRET!) as any
+    await supabase.from('users').update({ push_token: token }).eq('id', decoded.id)
+    res.json({ message: 'ok' })
+  } catch {
+    res.status(401).json({ error: 'Invalid token' })
+  }
+})
+
 export default router

@@ -24,6 +24,7 @@ import adminWithdrawalRoutes from './routes/admin/withdrawals'
 import adminUserRoutes from './routes/admin/users'
 import adminTransactionRoutes from './routes/admin/transactions'
 import adminReportRoutes from './routes/admin/reports'
+import adminBankAccountRoutes from './routes/admin/bank-accounts'
 import tripayWebhookRoutes from './routes/webhooks/tripay'
 
 const app = express()
@@ -60,6 +61,7 @@ app.use('/api/admin/withdrawals', adminWithdrawalRoutes)
 app.use('/api/admin/users', adminUserRoutes)
 app.use('/api/admin/transactions', adminTransactionRoutes)
 app.use('/api/admin/reports', adminReportRoutes)
+app.use('/api/admin/bank-accounts', adminBankAccountRoutes)
 app.use('/api/webhooks/tripay', tripayWebhookRoutes)
 
 app.listen(PORT, () => {
